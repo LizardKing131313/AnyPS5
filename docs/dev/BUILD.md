@@ -38,7 +38,8 @@ The focused Linux workflow `FreeType slot integration` also builds the productio
 ```sh
 cmake -S core/libs/tests/freetype-slot -B build-slot -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build-slot --parallel 2
-ctest --test-dir build-slot --no-tests=error --output-on-failure -V
+ctest --test-dir build-slot -R '^guest_freetype_ot_ttf_hinting$' --no-tests=error --output-on-failure -V
+ctest --test-dir build-slot -R '^guest_freetype_ot_new_glyph_slot$' --no-tests=error --output-on-failure -V
 ```
 
 ## Fuzzing

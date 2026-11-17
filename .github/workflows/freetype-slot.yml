@@ -36,4 +36,7 @@ jobs:
       - run: git submodule update --init 3rdparty/freetype-slot-tests
       - run: cmake -S core/libs/tests/freetype-slot -B build-slot -G Ninja -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build-slot --parallel 2
-      - run: ctest --test-dir build-slot --no-tests=error --output-on-failure --output-junit slot-tests.xml -V
+      - name: Require the TTF hinting test to execute
+        run: ctest --test-dir build-slot -R '^guest_freetype_ot_ttf_hinting$' --no-tests=error --output-on-failure --output-junit ttf-tests.xml -V
+      - name: Require the slot lifecycle test to execute
+        run: ctest --test-dir build-slot -R '^guest_freetype_ot_new_glyph_slot$' --no-tests=error --output-on-failure --output-junit slot-lifecycle-tests.xml -V
