@@ -18,6 +18,21 @@ The output is x86-64: Linux ELF by default, Windows PE with `--windows` or Mach-
 
 Use a separate build directory for the full build.
 
+## FreeType slot TTF integration test
+
+`guest_freetype_ot_ttf_hinting` loads a generated TrueType font through the pinned test-only `3rdparty/freetype-slot-tests` submodule. The reference FreeType has its slot-creation definition removed in the build directory and imports the production implementation. The test checks native SCFS bytecode at 8, 13 and 19 ppem, the unhinted control, slot identity, grayscale rasterization and destruction. It needs no window, GPU, system font or network access when building or running after the submodules are initialized.
+
+On 64-bit Linux it builds with the normal compiler. On Windows the guest records need LP64, so set `ANYPS5_FREETYPE_SLOT_ZIG` to a Zig executable (tested with 0.15.2). CMake builds the reference as an ELF module and uses the relinker and the built PRX libraries to run it on Windows. Without that setting or a `zig` on `PATH`, Windows reports the integration test as disabled during configuration; the other slot tests remain available.
+
+```sh
+git submodule update --init 3rdparty/freetype-slot-tests
+cmake -S . -B build -DBUILD_TESTING=ON -DANYPS5_FREETYPE_SLOT_ZIG=C:/path/to/zig.exe
+cmake --build build --target guest_freetype_ot_ttf_tests
+ctest --test-dir build -R '^guest_freetype_ot_ttf_hinting$' -V
+```
+
+Omit `ANYPS5_FREETYPE_SLOT_ZIG` on Linux.
+
 ## Fuzzing
 
 `ANYPS5_BUILD_FUZZERS` builds `relinker_conversion_fuzzer`, a libFuzzer target that runs the whole conversion on its input, as the web converter does. It requires `ANYPS5_RELINKER_ONLY`, Clang on Linux and the compiler-rt sanitizer runtimes (`libclang-rt-18-dev` on Ubuntu 24.04). Every target is built with AddressSanitizer and UndefinedBehaviorSanitizer, without `-fsanitize=function`: that check reads a signature before the target of every indirect call and faults on the generated code the codegen tests call. The first input byte selects the target system (modulo 3: Linux, Windows, macOS), bit 2 `--to-intel` and the byte shifted right by 3, modulo 3, the `unused-filter` level; the remaining bytes are the executable. A conversion that throws a `std::exception` is a rejected input; a sanitizer report, an abort or a timeout is a finding.

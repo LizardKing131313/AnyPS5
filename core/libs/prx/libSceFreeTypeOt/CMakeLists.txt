@@ -250,3 +250,5 @@ if(BUILD_TESTING)
             "PATH=path_list_prepend:$<TARGET_FILE_DIR:libSceFreeTypeOt>")
     endif()
 endif()
+
+include(TtfSlotTests.cmake)

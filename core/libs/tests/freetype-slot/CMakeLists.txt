@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(FreeTypeSlotGuest C)
+include(Reference.cmake)
+add_freetype_slot_reference(slotFreeType "${FREETYPE_SLOT_SOURCE}" "${FREETYPE_SLOT_GENERATED}")
+set_target_properties(slotFreeType PROPERTIES PREFIX "" SUFFIX ".prx")
+target_link_options(slotFreeType PRIVATE -nostdlib "-Wl,--hash-style=sysv" "-Wl,--no-as-needed")
+target_link_libraries(slotFreeType PRIVATE "${FREETYPE_SLOT_IMPORTS}/libSceFreeTypeOt.so" "${FREETYPE_SLOT_IMPORTS}/libc.so")
