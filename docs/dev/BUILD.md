@@ -22,7 +22,7 @@ Use a separate build directory for the full build.
 
 `guest_freetype_ot_ttf_hinting` loads a generated TrueType font through the pinned test-only `3rdparty/freetype-slot-tests` submodule. The reference FreeType has its slot-creation definition removed in the build directory and imports the production implementation. The test checks native SCFS bytecode at 8, 13 and 19 ppem, the unhinted control, slot identity, grayscale rasterization and destruction. It needs no window, GPU, system font or network access when building or running after the submodules are initialized.
 
-On 64-bit Linux it builds with the normal compiler. On Windows the guest records need LP64, so set `ANYPS5_FREETYPE_SLOT_ZIG` to a Zig executable (tested with 0.15.2). CMake builds the reference as an ELF module and uses the relinker and the built PRX libraries to run it on Windows. Without that setting or a `zig` on `PATH`, Windows reports the integration test as disabled during configuration; the other slot tests remain available.
+On 64-bit Linux it builds with the normal compiler. On Windows the guest records need LP64, so set `ANYPS5_FREETYPE_SLOT_ZIG` to a Zig executable (tested with 0.15.2). CMake builds the reference as an ELF module and uses the relinker and the built PRX libraries to run it on Windows. Without that setting, Windows reports the integration test as disabled during configuration; the other slot tests remain available.
 
 ```sh
 git submodule update --init 3rdparty/freetype-slot-tests
@@ -32,6 +32,14 @@ ctest --test-dir build -R '^guest_freetype_ot_ttf_hinting$' -V
 ```
 
 Omit `ANYPS5_FREETYPE_SLOT_ZIG` on Linux.
+
+The focused Linux workflow `FreeType slot integration` also builds the production `SlotCreation.cpp`, `GlyphSlot.cpp` and `Memory.cpp` directly, with a test-only unsupported-path hook that throws, and runs both the slot lifecycle test and the same generated-TTF integration test. This avoids configuring unrelated graphics libraries on the hosted runner. Run its exact commands locally after initializing `3rdparty/freetype-slot-tests`:
+
+```sh
+cmake -S core/libs/tests/freetype-slot -B build-slot -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build-slot --parallel 2
+ctest --test-dir build-slot --no-tests=error --output-on-failure -V
+```
 
 ## Fuzzing
 

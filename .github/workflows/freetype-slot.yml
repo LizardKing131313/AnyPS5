@@ -1,0 +1,39 @@
+name: FreeType slot integration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/freetype-slot.yml'
+      - '.gitmodules'
+      - '3rdparty/freetype-slot-tests'
+      - 'core/libs/prx/libSceFreeTypeOt/**'
+      - 'core/libs/prx/libSceFreeType/include/**'
+      - 'core/libs/prx/libc/include/**'
+      - 'core/libs/tests/GuestFreeTypeOtNewGlyphSlot.cpp'
+      - 'core/libs/tests/freetype-slot/**'
+  pull_request:
+    paths:
+      - '.github/workflows/freetype-slot.yml'
+      - '.gitmodules'
+      - '3rdparty/freetype-slot-tests'
+      - 'core/libs/prx/libSceFreeTypeOt/**'
+      - 'core/libs/prx/libSceFreeType/include/**'
+      - 'core/libs/prx/libc/include/**'
+      - 'core/libs/tests/GuestFreeTypeOtNewGlyphSlot.cpp'
+      - 'core/libs/tests/freetype-slot/**'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-slot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - run: git submodule update --init 3rdparty/freetype-slot-tests
+      - run: cmake -S core/libs/tests/freetype-slot -B build-slot -G Ninja -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build-slot --parallel 2
+      - run: ctest --test-dir build-slot --no-tests=error --output-on-failure --output-junit slot-tests.xml -V
