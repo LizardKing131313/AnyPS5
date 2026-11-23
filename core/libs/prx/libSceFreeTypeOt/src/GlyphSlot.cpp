@@ -109,6 +109,7 @@ void SlotDone(GuestGlyphSlotRec* slot, const char* function) {
         internal->loader = nullptr;
     }
     Free(memory, internal, function);
+    slot->internal = nullptr;
 }
 
 }
