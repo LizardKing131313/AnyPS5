@@ -1,0 +1,77 @@
+name: AvPlayer wait verification
+
+on:
+  push:
+    branches: [ci/avplayer-wait-21718]
+    paths: [.github/workflows/avplayer-wait-verification.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  accuracy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 55cfe760e915b6478a21d51384f5d005b3798d04
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify tested revision
+        run: test "$(git rev-parse HEAD)" = 55cfe760e915b6478a21d51384f5d005b3798d04
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build pkg-config nasm libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev libasound2-dev libpulse-dev libudev-dev
+      - name: Cache WinLibs
+        if: runner.os == 'Windows'
+        id: winlibs
+        uses: actions/cache@v6
+        with:
+          path: C:\winlibs
+          key: winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+      - name: Install WinLibs
+        if: runner.os == 'Windows' && steps.winlibs.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfL --retry 3 -o "$RUNNER_TEMP/winlibs.zip" https://github.com/brechtsanders/winlibs_mingw/releases/download/15.2.0posix-14.0.0-ucrt-r7/winlibs-x86_64-posix-seh-gcc-15.2.0-mingw-w64ucrt-14.0.0-r7.zip
+          echo "cb2fbad6162540cdf5e1facdce08d4dac359e8cf64f7f696a99274291763b815  $RUNNER_TEMP/winlibs.zip" | sha256sum -c -
+          7z x "$RUNNER_TEMP/winlibs.zip" -oC:/winlibs > /dev/null
+      - name: Set Windows toolchain and CA bundle
+        if: runner.os == 'Windows'
+        run: |
+          echo 'C:\winlibs\mingw64\bin' >> "$GITHUB_PATH"
+          for prefix in ucrt64 mingw64; do
+            bundle="C:/Program Files/Git/$prefix/etc/ssl/certs/ca-bundle.crt"
+            if [ -f "$bundle" ]; then echo "SSL_CERT_FILE=$bundle" >> "$GITHUB_ENV"; exit 0; fi
+          done
+          exit 1
+      - name: Configure Linux
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+      - name: Build AvPlayer tests
+        run: cmake --build build --target guest_avplayer_tests guest_avplayer_trick_speed_tests guest_avplayer_native_tests guest_avplayer_native_printf_tests avplayer_file_seek_tests avplayer_http_transport_tests avplayer_http_patched_modules_tests guest_http_client_tests --parallel 4
+      - name: Run AvPlayer suite
+        run: ctest --test-dir build -R '^(guest_)?avplayer' -V --no-tests=error --output-junit avplayer-results.xml
+      - name: Repeat actual buffer wait accuracy
+        run: ctest --test-dir build -R '^guest_avplayer_buffer_wait_accuracy$' -V --repeat until-fail:5 --no-tests=error --output-log timing-repeat.log
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: avplayer-wait-${{ runner.os }}
+          path: |
+            build/avplayer-results.xml
+            build/timing-repeat.log
+            build/Testing/Temporary/LastTest.log
