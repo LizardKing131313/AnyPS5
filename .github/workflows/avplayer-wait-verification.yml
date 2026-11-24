@@ -22,11 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: 55cfe760e915b6478a21d51384f5d005b3798d04
+          ref: b14abb0fbebe4851f66153bb69efe8a959b9e76d
+          fetch-depth: 5
           submodules: recursive
           persist-credentials: false
       - name: Verify tested revision
-        run: test "$(git rev-parse HEAD)" = 55cfe760e915b6478a21d51384f5d005b3798d04
+        run: test "$(git rev-parse HEAD)" = b14abb0fbebe4851f66153bb69efe8a959b9e76d
+      - name: Check PR conventions and debt
+        if: runner.os == 'Linux'
+        run: |
+          python3 tools/check_conventions.py --base adacf0bd8322b718a118c09e9fe924e2a4365555 --head b14abb0fbebe4851f66153bb69efe8a959b9e76d
+          python3 tools/debt_fold.py --check
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
