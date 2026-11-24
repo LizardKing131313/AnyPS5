@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest]
+        os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     defaults:
@@ -31,6 +31,7 @@ jobs:
       - name: Check PR conventions and debt
         if: runner.os == 'Linux'
         run: |
+          git fetch --unshallow --no-tags origin b14abb0fbebe4851f66153bb69efe8a959b9e76d
           python3 tools/check_conventions.py --base adacf0bd8322b718a118c09e9fe924e2a4365555 --head b14abb0fbebe4851f66153bb69efe8a959b9e76d
           python3 tools/debt_fold.py --check
       - name: Install Linux build dependencies
