@@ -72,6 +72,36 @@ alignas(256) constexpr std::array<std::uint32_t, 50> PartialWave64{
     0x80010a00u, 0xbf810000u,
 };
 
+alignas(256) constexpr auto PreservedInactiveWave32 = [] {
+    std::array<std::uint32_t, PartialWave32.size() + 8u> result{};
+    constexpr std::array<std::uint32_t, 8> stale{
+        0x7e040208u, 0x7e060209u, 0x7e08020au, 0x7e0a020bu,
+        0x7e0c020cu, 0x7e0e020du, 0x7e10020eu, 0x7e12020fu,
+    };
+    std::copy_n(PartialWave32.begin(), 4u, result.begin());
+    std::copy(stale.begin(), stale.end(), result.begin() + 4u);
+    std::copy(PartialWave32.begin() + 4u, PartialWave32.end(), result.begin() + 12u);
+    return result;
+}();
+
+template<std::size_t Size>
+constexpr auto BallotComparisons(const std::array<std::uint32_t, Size>& source) {
+    std::array<std::uint32_t, Size + 8u> result{};
+    std::size_t next = 0u;
+    for (const auto word : source) {
+        if ((word & 0xffff0000u) == 0x7da40000u) {
+            result[next++] = word - 0x00200000u;
+            result[next++] = 0x877e6a7eu;
+        } else {
+            result[next++] = word == 0xbf85ffe0u ? 0xbf85ffd8u : word;
+        }
+    }
+    return result;
+}
+
+alignas(256) constexpr auto BallotWave32 = BallotComparisons(WholeWave32);
+alignas(256) constexpr auto PreservedBallotWave32 = BallotComparisons(PreservedInactiveWave32);
+
 alignas(256) constexpr std::array<std::uint32_t, 50> GuardedWave32{
     0x36020083u, 0x2c1c0082u, 0x7e1e0280u, 0x7e1402c1u, 0xbe9c037eu, 0x7da80202u, 0xbf880026u, 0xe0382000u,
     0x80000201u, 0xe0382010u, 0x80000601u, 0xbf8c3f70u, 0xbe94037eu, 0xbe961314u, 0xd7600008u, 0x00002d02u,
@@ -411,6 +441,9 @@ int main(int argc, char** argv) {
         Run(*device, WholeWave32, 32u, false, "wave32 waterfall over the whole wave");
         Run(*device, WholeWave32, 32u, false, "wave32 waterfall over a table V# with fewer records than keys", Records - 1u);
         Run(*device, PartialWave32, 32u, true, "wave32 waterfall under a partial EXEC");
+        Run(*device, PreservedInactiveWave32, 32u, true, "wave32 waterfall retaining a descriptor only in inactive lanes");
+        Run(*device, BallotWave32, 32u, false, "wave32 waterfall comparing descriptor words through ballot masks");
+        Run(*device, PreservedBallotWave32, 32u, true, "wave32 ballot waterfall retaining a descriptor only in inactive lanes");
         if (device->Target().subgroupSize >= 32u) Run(*device, PartialWave64, 64u, true, "wave64 waterfall under a partial EXEC");
         Run(*device, FirstLaneWave32, 32u, false, "wave32 waterfall picking lanes with v_readfirstlane");
         Run(*device, Compare64Wave32, 32u, false, "wave32 waterfall comparing the T# with v_cmpx_eq_u64");

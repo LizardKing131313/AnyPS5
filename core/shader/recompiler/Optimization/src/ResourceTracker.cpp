@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -1318,7 +1319,73 @@ private:
         return false;
     }
 
-    bool TryMakeLaneTableColumn(IrValue& handle, bool implicitDerivatives, TableColumnPlan& plan) {
+    bool LanePredicateImplies(const IrValue* predicate, const IrValue* condition) const {
+        if (predicate == nullptr || condition == nullptr || m_program.WaveSize() != 32u) return false;
+        std::vector<std::tuple<const IrValue*, const IrValue*, bool>> pending;
+        std::size_t budget = 4096u;
+        std::function<bool(const IrValue*, const IrValue*, bool)> implies;
+        implies = [&](const IrValue* value, const IrValue* wanted, bool mask) {
+            if (budget == 0u) return false;
+            --budget;
+            value = value->Resolve();
+            wanted = wanted->Resolve();
+            if (!mask && EquivalentValue(m_program.Resources(), value, wanted)) return true;
+            if (wanted->HasImmediate() && wanted->Type() == IrType::U1 && wanted->ImmediateBool()) return true;
+            if (value->HasImmediate()) {
+                if (mask && value->Type() == IrType::U32 && value->ImmediateU32() == 0u) return true;
+                if (!mask && value->Type() == IrType::U1 && !value->ImmediateBool()) return true;
+            }
+            const auto key = std::tuple{value, wanted, mask};
+            if (std::ranges::find(pending, key) != pending.end()) return true;
+            pending.push_back(key);
+            const auto prove = [&]() {
+                if (wanted->Opcode() == IrOpcode::LogicalAnd && wanted->ArgumentCount() == 2u) {
+                    return implies(value, wanted->Argument(0), mask) && implies(value, wanted->Argument(1), mask);
+                }
+                const auto conjunction = mask ? IrOpcode::BitwiseAnd32 : IrOpcode::LogicalAnd;
+                if (value->Opcode() == conjunction && value->ArgumentCount() == 2u) {
+                    return implies(value->Argument(0), wanted, mask) || implies(value->Argument(1), wanted, mask);
+                }
+                if (value->IsPhi() && value->ArgumentCount() != 0u) {
+                    for (std::size_t edge = 0u; edge < value->ArgumentCount(); ++edge) {
+                        if (!implies(value->Argument(edge), wanted, mask)) return false;
+                    }
+                    return true;
+                }
+                if (mask && value->Opcode() == IrOpcode::CompositeExtractU32x4 && value->ArgumentCount() == 2u) {
+                    std::uint32_t component = 0u;
+                    const auto* ballot = value->Argument(0)->Resolve();
+                    if (immediateU32(value->Argument(1), component) && component == 0u && ballot->Opcode() == IrOpcode::Ballot && ballot->ArgumentCount() == 1u) {
+                        return implies(ballot->Argument(0), wanted, false);
+                    }
+                }
+                if (!mask && value->Opcode() == IrOpcode::INotEqual32 && value->ArgumentCount() == 2u) {
+                    std::uint32_t immediate = 0u;
+                    const IrValue* bits = nullptr;
+                    if (immediateU32(value->Argument(0), immediate) && immediate == 0u) bits = value->Argument(1)->Resolve();
+                    else if (immediateU32(value->Argument(1), immediate) && immediate == 0u) bits = value->Argument(0)->Resolve();
+                    if (bits == nullptr || bits->Opcode() != IrOpcode::BitwiseAnd32 || bits->ArgumentCount() != 2u) return false;
+                    const IrValue* shifted = nullptr;
+                    if (immediateU32(bits->Argument(0), immediate) && immediate == 1u) shifted = bits->Argument(1)->Resolve();
+                    else if (immediateU32(bits->Argument(1), immediate) && immediate == 1u) shifted = bits->Argument(0)->Resolve();
+                    if (shifted == nullptr || shifted->Opcode() != IrOpcode::ShiftRightLogical32 || shifted->ArgumentCount() != 2u) return false;
+                    const auto* lane = shifted->Argument(1)->Resolve();
+                    if (lane->Opcode() == IrOpcode::BitwiseAnd32 && lane->ArgumentCount() == 2u) {
+                        if (immediateU32(lane->Argument(1), immediate) && immediate == 31u) lane = lane->Argument(0)->Resolve();
+                        else if (immediateU32(lane->Argument(0), immediate) && immediate == 31u) lane = lane->Argument(1)->Resolve();
+                    }
+                    return lane->Opcode() == IrOpcode::LaneId && implies(shifted->Argument(0), wanted, true);
+                }
+                return false;
+            };
+            const bool result = prove();
+            pending.pop_back();
+            return result;
+        };
+        return implies(predicate, condition, false);
+    }
+
+    bool TryMakeLaneTableColumn(IrValue& handle, bool implicitDerivatives, TableColumnPlan& plan, const IrValue* predicate) {
         if (handle.Opcode() != IrOpcode::GetImageResource || handle.ArgumentCount() != 8u || handle.Parent() == nullptr) {
             return false;
         }
@@ -1351,7 +1418,7 @@ private:
             std::array<IrValue*, 8> others {};
             std::ranges::transform(reads, others.begin(), &LaneTableRead::other);
             std::vector<std::array<IrValue*, 8>> visited;
-            if (MayHoldDescriptor(others, 0u, visited)) {
+            if (MayHoldDescriptor(others, 0u, visited) && !LanePredicateImplies(predicate, reads[0].written)) {
                 return false;
             }
         }
@@ -1497,6 +1564,11 @@ private:
             IrValue* source = value->Argument(0)->Resolve();
             const bool proven = std::ranges::any_of(equal, [&](const auto& pair) {
                 return (pair.first == value && pair.second == source) || (pair.first == source && pair.second == value);
+            }) || std::ranges::any_of(value->OperandUses(), [&](const IrUse& use) {
+                const auto* comparison = use.user;
+                return comparison->Opcode() == IrOpcode::IEqual32 && comparison->ArgumentCount() == 2u
+                    && comparison->Argument(1u - use.operand)->Resolve() == source
+                    && LanePredicateImplies(ObservingCondition(inst), comparison);
             });
             if (!proven) {
                 return;
@@ -1513,7 +1585,7 @@ private:
         });
         static const bool tables = std::getenv("APS5_NO_IMAGE_TABLES") == nullptr;
         TableColumnPlan plan;
-        if (!accepted && tables && expected == IrOpcode::GetImageResource && TryMakeLaneTableColumn(*copy, ImplicitDerivatives(inst), plan)) {
+        if (!accepted && tables && expected == IrOpcode::GetImageResource && TryMakeLaneTableColumn(*copy, ImplicitDerivatives(inst), plan, ObservingCondition(inst))) {
             m_tableColumns.push_back(std::move(plan));
             accepted = true;
         }
@@ -1545,9 +1617,6 @@ private:
                 continue;
             }
             const Equalities equal = ImpliedEqualities(condition);
-            if (equal.empty()) {
-                continue;
-            }
             FoldLaneReads(*inst, 0u, IrOpcode::GetImageResource, 8u, equal);
             if (sampler) {
                 FoldLaneReads(*inst, 1u, IrOpcode::GetSamplerResource, 4u, equal);
