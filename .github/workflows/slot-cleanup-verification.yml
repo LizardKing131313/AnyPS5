@@ -1,0 +1,79 @@
+name: FreeType slot cleanup red-green
+
+on:
+  push:
+    branches: [ci/slot-cleanup-27571]
+    paths: [.github/workflows/slot-cleanup-verification.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: f801543a48f11e3225ad3614a13d0b57c97df267
+          fetch-depth: 5
+          submodules: recursive
+          persist-credentials: false
+      - name: Verify exact PR revision and unchanged regression test
+        run: |
+          test "$(git rev-parse HEAD)" = f801543a48f11e3225ad3614a13d0b57c97df267
+          git diff --exit-code 11cf850527 HEAD -- core/libs/tests/GuestFreeTypeOtGlyphSlot.cpp
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ninja-build pkg-config nasm libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxinerama-dev libwayland-dev libxkbcommon-dev libegl-dev libdecor-0-dev libasound2-dev libpulse-dev libudev-dev
+      - name: Restore production source before the fix
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import Path
+          path = 'core/libs/prx/libSceFreeTypeOt/src/GlyphSlot.cpp'
+          Path(path).write_bytes(subprocess.check_output(['git', 'show', '11cf850527:' + path]))
+          PY
+      - name: Configure and build unchanged library with regression test
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+          cmake --build build --target guest_freetype_ot_glyph_slot_tests --parallel 4
+      - name: Require the regression to fail before the fix
+        run: |
+          set +e
+          ctest --test-dir build -R '^guest_freetype_ot_glyph_slot$' -V --no-tests=error --output-junit before.xml > before.log 2>&1
+          result=$?
+          set -e
+          cat before.log
+          test "$result" -ne 0
+          grep -F 'FreeType Ot glyph slot: failed initialisation clears slot->internal before the allocator frees the slot' before.log
+      - name: Restore and build exact PR production source
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import Path
+          path = 'core/libs/prx/libSceFreeTypeOt/src/GlyphSlot.cpp'
+          Path(path).write_bytes(subprocess.check_output(['git', 'show', 'HEAD:' + path]))
+          PY
+          git diff --exit-code
+          cmake --build build --target guest_freetype_ot_glyph_slot_tests guest_freetype_ot_tests guest_freetype_ot_memory_tests guest_freetype_ot_outline_tests --parallel 4
+      - name: Require the same regression and related tests to pass
+        run: |
+          set -o pipefail
+          ctest --test-dir build -R '^guest_freetype_ot($|_glyph_slot$|_memory$|_outline$)' -V --no-tests=error --output-junit after.xml | tee after.log
+      - name: Check conventions and debt with complete history
+        run: |
+          git fetch --unshallow --no-tags origin f801543a48f11e3225ad3614a13d0b57c97df267
+          python3 tools/check_conventions.py --base c1a89b944c --head HEAD
+          python3 tools/debt_fold.py --check
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: slot-cleanup-linux-red-green
+          path: |
+            before.log
+            after.log
+            build/before.xml
+            build/after.xml
+            build/Testing/Temporary/LastTest.log
